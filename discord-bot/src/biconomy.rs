@@ -2,6 +2,7 @@ use reqwest::{
     header::{HeaderMap, HeaderName, HeaderValue},
     Client,
 };
+use serde::Deserialize;
 
 static DATA_API_URL: &'static str = "https://data.biconomy.io/api/v1/dapp";
 
@@ -27,20 +28,48 @@ impl From<API> for String {
     }
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BiconomyResponse {
+    pub code: u16,
+    pub message: String,
+    pub response_code: u16,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DappGasTankData {
+    pub effective_balance_in_wei: u128,
+    pub effective_balance_in_standard_form: f64,
+    pub is_below_threshold: bool,
+    pub is_in_grace_period: bool,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GasTankBalanceResponse {
+    #[serde(flatten)]
+    pub response: BiconomyResponse,
+    pub dapp_gas_tank_data: DappGasTankData,
+}
+
 pub struct BiconomyClient {
     http_client: Client,
     auth_token: String,
 }
 
 impl BiconomyClient {
-    pub fn new(auth_token: String) -> Self {
+    pub fn new(auth_token: &String) -> Self {
         Self {
             http_client: Client::new(),
-            auth_token,
+            auth_token: auth_token.clone(),
         }
     }
 
-    pub async fn gas_tank_balance(&self, api_key: String) -> String {
+    pub async fn gas_tank_balance(
+        &self,
+        api_key: &String,
+    ) -> Result<GasTankBalanceResponse, BiconomyResponse> {
         let mut headers = HeaderMap::new();
         headers.insert(
             HeaderName::from_bytes(b"authToken").unwrap(),
@@ -53,14 +82,23 @@ impl BiconomyClient {
         let res = self
             .http_client
             .get(String::from(API::Data(Data::GasTankBalance)))
-            .headers(headers)
+            .headers(headers.clone())
             .send()
             .await
-            .unwrap()
-            .text()
-            .await
             .unwrap();
-
-        res
+        let data = res.json::<GasTankBalanceResponse>().await;
+        match data {
+            Ok(data) => Ok(data),
+            Err(_) => Err(self
+                .http_client
+                .get(String::from(API::Data(Data::GasTankBalance)))
+                .headers(headers)
+                .send()
+                .await
+                .unwrap()
+                .json::<BiconomyResponse>()
+                .await
+                .unwrap()),
+        }
     }
 }
